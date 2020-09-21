@@ -1,0 +1,208 @@
+#!/bin/bash
+#
+# MY DESPERATE ATTEMPT TO CREATE AN ANSIBLE LIKE SIMPLE REMOTE MANAGEMENT UTILITY WHICH IS NOT ANSIBLE
+# AUTHOR: ANUP ADHIKARI
+# DATE: 04/20/2018
+# 
+#
+ADMIN=`who am i | awk '{print $1}'`
+USR="$ADMIN"
+SUSR="grep $ADMIN /usr/admin/locale/pins | cut -d' ' -f 2"
+loopcount=1
+LOG="/usr/admin/log/nansible--$USR--$(date +%Y-%m-%d.%H-%M-%S).log"
+#
+#
+function help {
+cat << EOF | less
+Nansible (Not Ansible) - A utility that lets you run command accross multiple servers with parallel ssh connections.
+
+Usage: 
+	nansible [Command options] [arguments] [options]
+	nansible [-l.. -c.. -t..] [-jAh]
+
+Options:
+	-A	Run command on all UNIX/LINUX servers.
+	-c	Command to run. If running multiple commands, sorround them with double quotes ("). Example: nansible -c "uptime && uname". 
+	-h	Show this help.
+	-j	If ssh keys are not available, use this option to use password. Passwords are set as a variable and later passed to 'sshpass' utility.
+	-l	List of servers. Not applicable along with option '-A'.
+	-t	(optional) Number of threads to run. If this option is not set, default of 10 threads will run. If there are less than 10 servers (passed in -l option), then default thread count will be the total number of servers.
+
+Author info:
+
+Anup Adhikari
+4/20/2018
+
+Report Bugs to: adh.anup@gmail.com
+
+EOF
+ exit
+}
+if [[ "$1" == "--help" || -z "$1" ]]; then
+#if [[ "$1" == "--help" ]]; then
+	help
+fi
+		
+while getopts "l:c:t:u:jAh" opt; do
+	case $opt in
+		l)
+		  SERVERLIST=$OPTARG
+		  #stat $SERVERLIST > /dev/null 2>&1
+		  #if [ "$?" != "0" ]; then
+		  #	#SERVERLIST=""
+		  #	echo "File $SERVERLIST not found."
+	 	  #	exit 32
+		  #fi
+		  #if [  -z "$SERVERLIST" ]; then
+			#echo "Server list not found. Please mention a list of servers with nansible -l <server list>."
+			#exit 32
+		  #fi
+		  ;;
+		c)
+		  COMMAND=$OPTARG
+  		  ;;
+		t)
+		  THREADCOUNT=$OPTARG
+		  THREADCOUNT=${THREADCOUNT//[^0-9]/}
+		  #if [[ $THREADCOUNT -le 10 ]]; then
+		  # THREADCOUNT=$(cat $SERVERLIST | wc -l)
+		  #fi
+		  ;;
+		u)
+		  MANUSR=1
+		  INUSR=$OPTARG
+		  ;;
+		j)
+		  USEPASS=1
+		  ;;
+		A)
+		  RUNONALL=1
+		  ;;
+		h)
+		  help
+		  ;;
+		\?)
+	          echo "invalid option: -$OPTARG . Try nansible -h for more info"
+        	  exit
+            	  ;;
+   	esac
+done
+if [ "$RUNONALL" = "1" ]; then
+	#if ask "Command $COMMAND will be run on ALL UNIX/LINUX servers (Total : $(cat $ALL | wc -l)). Are you sure? " Y; then
+		SERVERLIST=$ALL
+#	else
+#		:
+#	fi
+fi
+stat $SERVERLIST > /dev/null 2>&1
+if [ "$?" != "0" ]; then
+   #SERVERLIST=""
+   echo "File $SERVERLIST not found."
+   exit 32
+fi
+if [ -z $THREADCOUNT ]; then
+        THREADCOUNT=10
+fi
+if [[ `cat $SERVERLIST | wc -l` -le 10 ]]; then
+        THREADCOUNT=`cat $SERVERLIST | wc -l`
+fi
+#
+#
+# :: SECTION - CORE SCRIPT ::
+#
+worklist=`mktemp`
+cp $SERVERLIST $worklist
+SERVERLIST=$worklist
+touch $LOG
+if [ "$MANUSR" = "1" ]; then
+        USR=$INUSR
+fi
+if [ "${USEPASS}" = "1" ]; then
+	read -s -p "Enter ${USR}'s password: " SSHPASS
+	export SSHPASS
+	#REMOTE="sshpass -p $ANSWER ssh -oConnectTimeout=7 -oStrictHostKeyChecking=no"
+	REMOTE="sshpass -e ssh -oConnectTimeout=7 -oStrictHostKeyChecking=no"
+else
+	REMOTE="ssh -oConnectTimeout=7 -oBatchMode=yes -oStrictHostKeyChecking=no"
+fi
+#sed -i -e "1d" $SERVERLIST
+servercount=$(wc -l $SERVERLIST | awk '{print $1}')
+#while read i
+for i in `cat $SERVERLIST`
+do
+	# Progress section
+	clear
+	echo -e "Running on $i \t( $loopcount of $servercount )"
+	failurecount=$(grep -c ^FAILED $LOG)
+	echo "Failure count = $failurecount"
+    	sshfailurecount=$(grep -c ^FAILED-SSH $LOG)
+    	echo "SSH Failure count = $sshfailurecount"
+    	unpingablecount=$(grep -c ^UNPINGABLE $LOG)
+    	echo "Unpingable count = $unpingablecount"
+    	successcount=$(grep -c ^SUCCESS $LOG)
+    	echo "Success count = $successcount"
+    	echo ""
+	ping -c 1 -W 1 $i > /dev/null 2>&1
+   	pingstatus=$?
+        if [ $pingstatus -gt 0 ]; then
+         echo "UNPINGABLE ${loopcount}, ${i}" >> $LOG
+        else
+         $REMOTE $USR@$i "exit 0" > /dev/null 2>&1
+         if [ $? -gt 0 ]; then
+            echo "FAILED-SSH ${loopcount}, ${i}" >> $LOG
+         else
+            action=$($REMOTE $USR@$i "$COMMAND 2>&1" 2> /dev/null)
+            if [[ $? -gt 0 ]]; then
+                echo "FAILED ${loopcount}, ${i}, ${action}" >> $LOG
+            else
+                echo "SUCCESS ${loopcount}, ${i}, ${action}" >> $LOG
+            fi
+         fi
+        fi & 
+    ((loopcount++))
+    THREADCHECK=$((THREADCOUNT-1))
+#	echo
+#	echo $THREADCHECK
+#	echo "Jobs: $(jobs -p | wc -l)"
+	echo
+    while [[ $(jobs -p | wc -l) -gt $THREADCHECK ]]; do
+	tput cuu1 && tput el && tput el1
+        echo "Threads running: $(jobs -p | wc -l)"
+        sleep .5
+    done
+
+#done<$SERVERLIST
+done
+while [[ $(jobs -p | wc -l) -gt 1 ]]; do
+    tput cuu1 && tput el && tput el1
+   # for i in $(echo $cleanbghosts); do
+   #     tput cuu1 && tput el && tput el1
+   # done
+   # echo 
+    echo "Waiting for $(($(jobs -p | wc -l)-1)) background threads to finish"
+    #echo
+    bghosts=$(ps -ef | grep "$COMMAND" | grep ssh | grep -v grep | awk '{print $14}')
+    #cleanbghosts=$(echo $bghosts | sed "s/ $(head -1 $SERVERLIST) / /")
+    #cleanbghosts=$(echo $bghosts | sed "s/$(head -1 $SERVERLIST) / /")
+    #for i in $(echo $cleanbghosts); do
+    #    echo $i
+    #done
+    sleep 3
+done
+#clear
+unset SSHPASS
+more $LOG
+echo
+echo "Ran on $servercount servers"
+failurecount=$(grep -c ^FAILED $LOG | grep -v FAILED+SSH)
+echo "Total Failed = $failurecount"
+sshfailurecount=$(grep -c ^FAILED-SSH $LOG)
+echo "Failed SSH = $sshfailurecount"
+unpingablecount=$(grep -c ^UNPINGABLE $LOG)
+echo "Unpingable = $unpingablecount"
+successcount=$(grep -c ^SUCCESS $LOG)
+echo "Success = $successcount"
+echo 
+#echo "finished: $(date)" >> $log
+echo "Logs can be viewed at $LOG"
+rm -f $worklist

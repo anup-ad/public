@@ -1,0 +1,26 @@
+#!/usr/bin/python3
+
+import random
+def generate_pw(minchar=5):
+   if minchar < 5 or minchar >= 16:
+     raise ValueError
+   alpha = ['a','b','c','d','e','f','g','h','i','k','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','1','2','3','4','5','6','7','8','9','0','+','!','@','$','%','^','&','_','+','(',')','|','\'','>','<','?'] 
+   pw = ''
+   totalchars = int(len(alpha))
+   for i in range(minchar):
+     char = random.randint(0,totalchars)
+     pw += str(alpha[char])
+   return (pw)
+
+def main():
+  try:
+    minchar = int(input('Enter total chars in pw (Min 5/Max 15): '))
+    pwd = generate_pw(minchar=minchar)
+    print(pwd)
+  except ValueError:
+    print('Char should be min 5 and max 15')
+    exit(3)      
+
+
+if __name__ == '__main__':
+  main()
