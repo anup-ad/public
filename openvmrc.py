@@ -7,7 +7,7 @@ import update_db_vars as cred
 
 database = None
 domainFQDN = 'some_domain.com'
-userName = '{}\some_user'.format(domain)
+userName = '{}\some_user'.format(domain.split('.')[0])
 vmName = sys.argv[1].upper()
 
 def iniate_connection(user,pw,host,db):
